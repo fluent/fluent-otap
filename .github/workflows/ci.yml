@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux / ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc
+            runner: ubuntu-24.04
+            cc: gcc
+            cxx: g++
+            go_interop: 'ON'
+          - name: clang
+            runner: ubuntu-24.04
+            cc: clang
+            cxx: clang++
+            go_interop: 'OFF'
+          - name: ARM64 / gcc
+            runner: ubuntu-24.04-arm
+            cc: gcc
+            cxx: g++
+            go_interop: 'OFF'
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        if: matrix.go_interop == 'ON'
+        with:
+          go-version-file: tests/interop/go.mod
+          cache-dependency-path: tests/interop/go.sum
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y liblz4-dev libzstd-dev valgrind
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+          -DFLUENT_OTAP_GO_INTEROP=${{ matrix.go_interop }}
+      - name: Build
+        run: cmake --build build --parallel --target fluent-otap-test
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --no-tests=error
+      - name: Check memory
+        if: matrix.cc == 'gcc'
+        run: >
+          valgrind --leak-check=full --show-leak-kinds=all
+          --errors-for-leak-kinds=all --error-exitcode=99
+          build/tests/fluent-otap-test tests/fixtures
+
+  macos:
+    name: macOS / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: macos-15-intel
+            go_interop: 'OFF'
+          - arch: ARM64
+            runner: macos-15
+            go_interop: 'ON'
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        if: matrix.go_interop == 'ON'
+        with:
+          go-version-file: tests/interop/go.mod
+          cache-dependency-path: tests/interop/go.sum
+      - name: Install build dependencies
+        run: brew install lz4 zstd
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_PREFIX_PATH="$(brew --prefix zstd);$(brew --prefix lz4)"
+          -DFLUENT_OTAP_GO_INTEROP=${{ matrix.go_interop }}
+      - name: Build
+        run: cmake --build build --parallel --target fluent-otap-test
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --no-tests=error
+
+  windows:
+    name: Windows / ${{ matrix.arch }} / MSVC
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86
+            runner: windows-2022
+            generator: Visual Studio 17 2022
+            platform: Win32
+            triplet: x86-windows-static-md
+            go_interop: 'OFF'
+          - arch: x64
+            runner: windows-2022
+            generator: Visual Studio 17 2022
+            platform: x64
+            triplet: x64-windows-static-md
+            go_interop: 'ON'
+          - arch: ARM64
+            runner: windows-11-arm
+            generator: Visual Studio 18 2026
+            platform: ARM64
+            triplet: arm64-windows-static-md
+            go_interop: 'OFF'
+    env:
+      CMAKE_GENERATOR: ${{ matrix.generator }}
+      CMAKE_GENERATOR_PLATFORM: ${{ matrix.platform }}
+      VCPKG_TARGET_TRIPLET: ${{ matrix.triplet }}
+      FLUENT_OTAP_GO_INTEROP: ${{ matrix.go_interop }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        if: matrix.go_interop == 'ON'
+        with:
+          go-version-file: tests/interop/go.mod
+          cache-dependency-path: tests/interop/go.sum
+      - name: Install Zstandard
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install zstd --triplet $env:VCPKG_TARGET_TRIPLET
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          "-DVCPKG_TARGET_TRIPLET=$env:VCPKG_TARGET_TRIPLET"
+          "-DFLUENT_OTAP_GO_INTEROP=$env:FLUENT_OTAP_GO_INTEROP"
+      - name: Build
+        run: cmake --build build --config Debug --parallel --target fluent-otap-test
+      - name: Test
+        run: ctest --test-dir build --build-config Debug --output-on-failure --no-tests=error
