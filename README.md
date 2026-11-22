@@ -32,9 +32,11 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-GitHub Actions runs the native suite with GCC and Clang on Linux, plus Go
-interoperability and strict Valgrind coverage on the GCC job.
-The same memory check can be run locally.
+GitHub Actions runs the native suite on Linux x64 and ARM64, macOS Intel and
+Apple silicon, and Windows x86, x64, and ARM64. Linux covers GCC and Clang.
+The Linux GCC jobs also run strict Valgrind, and Go interoperability runs on
+Linux x64, macOS ARM64, and Windows x64. The same memory check can be run
+locally.
 
 ```sh
 valgrind --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=all \
